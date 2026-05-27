@@ -155,11 +155,21 @@ What are you doing?
 3. I received .env.team.enc and want to decrypt it
 ```
 
+When sharing, EnvHelper asks what to include:
+
+```txt
+1. Share .env excluding likely personal keys
+2. Share whole .env
+3. Choose keys to exclude
+```
+
 More explicit sharing commands:
 
 ```bash
 envhelper invite
 envhelper share --recipient age1...
+envhelper share --recipient age1... --whole-env
+envhelper share --recipient age1... --exclude GITHUB_TOKEN,PROD_DATABASE_URL
 envhelper share --recipients-dir invites
 envhelper join
 ```

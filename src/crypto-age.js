@@ -42,6 +42,20 @@ export async function encryptBundle({ inputPath, outputPath, recipients }) {
   if (result.status !== 0) throw new Error(result.stderr || "age encryption failed");
 }
 
+export async function encryptBundleContent({ content, outputPath, recipients }) {
+  const args = [];
+  for (const recipient of recipients) {
+    args.push("-r", recipient);
+  }
+  args.push("-o", outputPath);
+  const result = spawnSync("age", args, {
+    encoding: "utf8",
+    input: content,
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  if (result.status !== 0) throw new Error(result.stderr || "age encryption failed");
+}
+
 export async function decryptBundle({ inputPath, outputPath, identityPath }) {
   const result = spawnSync("age", ["-d", "-i", identityPath, "-o", outputPath, inputPath], {
     encoding: "utf8",

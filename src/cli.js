@@ -5,7 +5,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
-import { decryptBundle, ensureAgeIdentity, encryptBundle, hasAge } from "./crypto-age.js";
+import { decryptBundle, ensureAgeIdentity, encryptBundleContent, hasAge } from "./crypto-age.js";
 import { ensureEnvIgnored, parseEnvFile, upsertEnvFile, writeEnvExample } from "./envfile.js";
 import { copyText, formatLink, googleSearchUrl, openUrl } from "./links.js";
 import {
@@ -480,8 +480,14 @@ async function share(argv = []) {
   }
 
   const outPath = path.join(cwd, ".env.team.enc");
-  await encryptBundle({ inputPath: envPath, outputPath: outPath, recipients });
+  const payload = await prepareSharePayload(envPath, {
+    interactive: process.stdin.isTTY || options.interactive,
+    options
+  });
+  if (!payload) return;
+  await encryptBundleContent({ content: payload.content, outputPath: outPath, recipients });
   console.log(`Created ${path.basename(outPath)} encrypted for ${recipients.length} recipient(s).`);
+  printShareSummary(payload);
   console.log("Safe to share as ciphertext. Rotate upstream keys if a recipient should lose access later.");
 }
 
@@ -512,9 +518,160 @@ async function shareWizard(argv = []) {
     return;
   }
   const outPath = path.join(cwd, ".env.team.enc");
-  await encryptBundle({ inputPath: envPath, outputPath: outPath, recipients });
+  const payload = await prepareSharePayload(envPath, { interactive: true, options: parseArgs(argv) });
+  if (!payload) return;
+  await encryptBundleContent({ content: payload.content, outputPath: outPath, recipients });
   console.log(`Created ${path.basename(outPath)} encrypted for ${recipients.length} recipient(s).`);
+  printShareSummary(payload);
   console.log("Send .env.team.enc to teammates, or commit it if that is acceptable for your repo.");
+}
+
+async function prepareSharePayload(envPath, { interactive, options }) {
+  const content = await fs.readFile(envPath, "utf8");
+  const entries = collectEnvEntries(content);
+  const explicitExcluded = collectExcludedNames(options);
+  let excluded = [];
+  let mode = "excluding likely personal keys";
+
+  if (options.wholeEnv) {
+    mode = "whole .env";
+  } else if (explicitExcluded.length) {
+    mode = "custom exclusions";
+    excluded = explicitExcluded;
+  } else if (interactive) {
+    const choice = await chooseShareMode(entries);
+    if (choice === "cancel") return null;
+    mode = choice.mode;
+    excluded = choice.excluded;
+  } else {
+    excluded = likelyPersonalShareEntries(entries).map((entry) => entry.key);
+  }
+
+  const filtered = filterEnvContent(content, excluded);
+  if (!filtered.included.length) {
+    console.log("No env values left to share after exclusions. Nothing encrypted.");
+    return null;
+  }
+
+  return {
+    content: filtered.content,
+    included: filtered.included,
+    excluded: filtered.excluded,
+    mode
+  };
+}
+
+async function chooseShareMode(entries) {
+  const likelyPersonal = likelyPersonalShareEntries(entries);
+  console.log("\nWhat should EnvHelper include?\n");
+  console.log("1. Share .env excluding likely personal keys");
+  console.log("2. Share whole .env");
+  console.log("3. Choose keys to exclude");
+  const answer = await prompt("\nChoose [1]: ");
+  const choice = answer.trim() || "1";
+
+  if (choice === "2") return { mode: "whole .env", excluded: [] };
+  if (choice === "3") {
+    const excluded = await promptForExcludedKeys(entries);
+    return { mode: "custom exclusions", excluded };
+  }
+  if (choice !== "1") return { mode: "excluding likely personal keys", excluded: likelyPersonal.map((entry) => entry.key) };
+  return { mode: "excluding likely personal keys", excluded: likelyPersonal.map((entry) => entry.key) };
+}
+
+async function promptForExcludedKeys(entries) {
+  if (!entries.length) return [];
+  console.log("\nEnv values in this file:");
+  entries.forEach((entry, index) => {
+    console.log(`${index + 1}. ${entry.key}`);
+  });
+  const answer = await prompt("\nExclude which keys? Enter numbers or names, comma-separated: ");
+  const tokens = answer.split(",").map((token) => token.trim()).filter(Boolean);
+  const excluded = [];
+  for (const token of tokens) {
+    if (/^\d+$/.test(token)) {
+      const entry = entries[Number(token) - 1];
+      if (entry) excluded.push(entry.key);
+      continue;
+    }
+    excluded.push(token);
+  }
+  return uniqueNames(excluded);
+}
+
+function printShareSummary(payload) {
+  console.log(`Shared ${payload.included.length} env value(s) using ${payload.mode}.`);
+  if (!payload.excluded.length) return;
+  console.log(`Excluded ${payload.excluded.length}: ${payload.excluded.join(", ")}`);
+}
+
+function collectEnvEntries(content) {
+  const entries = [];
+  for (const line of content.split(/\r?\n/)) {
+    const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/);
+    if (!match) continue;
+    entries.push({ key: match[1], value: unquoteEnvValue(match[2].trim()) });
+  }
+  return entries;
+}
+
+function filterEnvContent(content, excludedNames) {
+  const excluded = new Set(excludedNames.map((name) => name.trim()).filter(Boolean));
+  const included = [];
+  const removed = [];
+  const lines = content.split(/\r?\n/);
+  const kept = [];
+
+  for (const line of lines) {
+    const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+    if (!match) {
+      kept.push(line);
+      continue;
+    }
+    const key = match[1];
+    if (excluded.has(key)) {
+      removed.push(key);
+      continue;
+    }
+    included.push(key);
+    kept.push(line);
+  }
+
+  return {
+    content: kept.join("\n").replace(/\s*$/, "\n"),
+    included: uniqueNames(included),
+    excluded: uniqueNames(removed)
+  };
+}
+
+function collectExcludedNames(options) {
+  const values = options.exclude || [];
+  return uniqueNames(values.flatMap((value) => value.split(",").map((name) => name.trim())));
+}
+
+function likelyPersonalShareEntries(entries) {
+  return entries.filter((entry) => isLikelyPersonalShareKey(entry.key, entry.value));
+}
+
+function isLikelyPersonalShareKey(name, value = "") {
+  const upper = name.toUpperCase();
+  const normalizedValue = value.trim();
+  if (upper.includes("PERSONAL")) return true;
+  if (upper.includes("PROD") || upper.includes("PRODUCTION")) return true;
+  if (upper.endsWith("_PRIVATE_KEY") || upper === "PRIVATE_KEY" || upper === "SSH_PRIVATE_KEY") return true;
+  if (/^(GH|GITHUB|GITLAB|NPM|VERCEL|NETLIFY|RAILWAY|RENDER|CLOUDFLARE)_(TOKEN|AUTH_TOKEN|API_TOKEN|ACCESS_TOKEN)$/.test(upper)) return true;
+  if (/^(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN)$/.test(upper)) return true;
+  if (/^(GOOGLE_APPLICATION_CREDENTIALS|GOOGLE_CREDENTIALS|AZURE_CLIENT_SECRET)$/.test(upper)) return true;
+  if (/^(DOCKER_PASSWORD|DOCKER_TOKEN|HOMEBREW_GITHUB_API_TOKEN)$/.test(upper)) return true;
+  if (normalizedValue.startsWith("sk_live_") || normalizedValue.startsWith("rk_live_")) return true;
+  return false;
+}
+
+function unquoteEnvValue(value) {
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1);
+  }
+  return value;
 }
 
 async function join() {
@@ -582,6 +739,8 @@ Useful extras:
 Explicit sharing aliases:
   envhelper invite --out alice.pub
   envhelper share --recipients-dir invites
+  envhelper share --exclude GITHUB_TOKEN,PROD_DATABASE_URL
+  envhelper share --whole-env
   envhelper join
 `);
 }
@@ -611,8 +770,8 @@ function commandHelp(name) {
     example: "Usage: envhelper example\n\nGenerate .env.example from detected env vars.",
     validate: "Usage: envhelper validate\n\nValidate local .env values with providers after explicit consent.",
     invite: "Usage: envhelper invite [--out teammate.pub]\n\nCreate or reuse a local age identity and print the public invite code.",
-    share: "Usage: envhelper share [--out teammate.pub] [--recipient age1...] [--recipients-file file] [--recipients-dir dir] [--interactive] [--join]\n\nSmart sharing command. Without recipients it explains the flow and prints your invite code. With recipient codes it encrypts .env. With .env.team.enc it decrypts locally.",
-    rekey: "Usage: envhelper rekey [--recipient age1...] [--recipients-file file] [--recipients-dir dir]\n\nAlias for share; re-encrypts the current local .env to a fresh recipient set.",
+    share: "Usage: envhelper share [--out teammate.pub] [--recipient age1...] [--recipients-file file] [--recipients-dir dir] [--exclude NAME[,NAME...]] [--whole-env] [--interactive] [--join]\n\nSmart sharing command. Without recipients it explains the flow and prints your invite code. With recipient codes it encrypts .env. Interactive sharing lets you exclude likely personal keys, share the whole .env, or choose exclusions. Non-interactive sharing excludes likely personal keys by default unless --whole-env is passed.",
+    rekey: "Usage: envhelper rekey [--recipient age1...] [--recipients-file file] [--recipients-dir dir] [--exclude NAME[,NAME...]] [--whole-env]\n\nAlias for share; re-encrypts the current local .env to a fresh recipient set.",
     join: "Usage: envhelper join\n\nDecrypt .env.team.enc locally into .env.",
     providers: "Usage: envhelper providers [--json]\n\nList the built-in source-backed provider directory.",
     commands: "Usage: envhelper commands\n\nShow the simplified command directory.",
@@ -1256,8 +1415,13 @@ function parseArgs(argv) {
     else if (arg === "--choose-profile") options.chooseProfile = true;
     else if (arg === "--invite") options.invite = true;
     else if (arg === "--join") options.join = true;
+    else if (arg === "--whole-env") options.wholeEnv = true;
     else if (arg === "--all" || arg === "-all") options.all = true;
     else if (arg === "--optional" || arg === "-optional") options.optional = true;
+    else if (arg === "--exclude") {
+      if (!options.exclude) options.exclude = [];
+      options.exclude.push(argv[++i] || "");
+    }
     else if (arg === "--out") options.out = argv[++i];
     else if (arg === "--profile") options.profile = argv[++i];
     else if (arg === "--recipients-file") options.recipientsFile = argv[++i];
@@ -1312,6 +1476,10 @@ function parseRecipientLines(content) {
 
 function uniqueRecipients(recipients) {
   return [...new Set(recipients.map((recipient) => recipient.trim()).filter(Boolean))];
+}
+
+function uniqueNames(names) {
+  return [...new Set(names.map((name) => name.trim()).filter(Boolean))];
 }
 
 async function prompt(question) {

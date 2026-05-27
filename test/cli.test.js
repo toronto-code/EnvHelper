@@ -181,6 +181,84 @@ test("cli smart share encrypts and decrypts with age when available", async () =
   assert.match(decrypted, /OPENAI_API_KEY=shared-openai-test/);
 });
 
+test("cli share excludes likely personal keys by default", async () => {
+  if (!hasAge()) return;
+
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), "envhelper-share-exclude-"));
+  const teammateHome = path.join(base, "teammate-home");
+  const leadHome = path.join(base, "lead-home");
+  const teammateRepo = path.join(base, "teammate-repo");
+  const leadRepo = path.join(base, "lead-repo");
+  await fs.mkdir(teammateHome, { recursive: true });
+  await fs.mkdir(leadHome, { recursive: true });
+  await fs.mkdir(teammateRepo, { recursive: true });
+  await fs.mkdir(leadRepo, { recursive: true });
+
+  runCli(["invite", "--out", "alice.pub"], { cwd: teammateRepo, home: teammateHome });
+  const publicKey = (await fs.readFile(path.join(teammateRepo, "alice.pub"), "utf8")).trim();
+
+  await fs.writeFile(
+    path.join(leadRepo, ".env"),
+    [
+      "OPENAI_API_KEY=project-openai-test",
+      "GITHUB_TOKEN=personal-github-test",
+      "STRIPE_SECRET_KEY=sk_live_not_for_team",
+      "TEAM_SETTING=shared"
+    ].join("\n"),
+    "utf8"
+  );
+
+  const output = runCli(["share", "--recipient", publicKey], { cwd: leadRepo, home: leadHome });
+  assert.match(output, /Shared 2 env value\(s\) using excluding likely personal keys/);
+  assert.match(output, /Excluded 2: GITHUB_TOKEN, STRIPE_SECRET_KEY/);
+
+  await fs.copyFile(path.join(leadRepo, ".env.team.enc"), path.join(teammateRepo, ".env.team.enc"));
+  runCli(["join"], { cwd: teammateRepo, home: teammateHome });
+  const decrypted = await fs.readFile(path.join(teammateRepo, ".env"), "utf8");
+  assert.match(decrypted, /OPENAI_API_KEY=project-openai-test/);
+  assert.match(decrypted, /TEAM_SETTING=shared/);
+  assert.doesNotMatch(decrypted, /personal-github-test/);
+  assert.doesNotMatch(decrypted, /sk_live_not_for_team/);
+});
+
+test("cli share can include the whole env or explicit exclusions", async () => {
+  if (!hasAge()) return;
+
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), "envhelper-share-choice-"));
+  const teammateHome = path.join(base, "teammate-home");
+  const leadHome = path.join(base, "lead-home");
+  const teammateRepo = path.join(base, "teammate-repo");
+  const leadRepo = path.join(base, "lead-repo");
+  await fs.mkdir(teammateHome, { recursive: true });
+  await fs.mkdir(leadHome, { recursive: true });
+  await fs.mkdir(teammateRepo, { recursive: true });
+  await fs.mkdir(leadRepo, { recursive: true });
+
+  runCli(["invite", "--out", "alice.pub"], { cwd: teammateRepo, home: teammateHome });
+  const publicKey = (await fs.readFile(path.join(teammateRepo, "alice.pub"), "utf8")).trim();
+
+  await fs.writeFile(
+    path.join(leadRepo, ".env"),
+    "OPENAI_API_KEY=project-openai-test\nGITHUB_TOKEN=personal-github-test\nTEAM_SETTING=shared\n",
+    "utf8"
+  );
+
+  runCli(["share", "--recipient", publicKey, "--whole-env"], { cwd: leadRepo, home: leadHome });
+  await fs.copyFile(path.join(leadRepo, ".env.team.enc"), path.join(teammateRepo, ".env.team.enc"));
+  runCli(["join"], { cwd: teammateRepo, home: teammateHome });
+  let decrypted = await fs.readFile(path.join(teammateRepo, ".env"), "utf8");
+  assert.match(decrypted, /GITHUB_TOKEN=personal-github-test/);
+
+  await fs.rm(path.join(teammateRepo, ".env"));
+  runCli(["share", "--recipient", publicKey, "--exclude", "TEAM_SETTING,GITHUB_TOKEN"], { cwd: leadRepo, home: leadHome });
+  await fs.copyFile(path.join(leadRepo, ".env.team.enc"), path.join(teammateRepo, ".env.team.enc"));
+  runCli(["join"], { cwd: teammateRepo, home: teammateHome });
+  decrypted = await fs.readFile(path.join(teammateRepo, ".env"), "utf8");
+  assert.match(decrypted, /OPENAI_API_KEY=project-openai-test/);
+  assert.doesNotMatch(decrypted, /TEAM_SETTING=shared/);
+  assert.doesNotMatch(decrypted, /GITHUB_TOKEN=personal-github-test/);
+});
+
 test("cli share without recipients explains invite flow and prints own invite", async () => {
   if (!hasAge()) return;
 
