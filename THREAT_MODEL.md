@@ -2,55 +2,50 @@
 
 ## Goals
 
-EnvHelper aims to prevent common accidental leaks:
+EnvHelper aims to prevent:
 
-- Sending `.env` files in chat.
-- Committing plaintext `.env` files.
-- Pasting secret keys into READMEs or frontend code.
-- Losing time because required environment variables are undocumented.
-- Sharing a team `.env` without encryption.
+- Printing secrets while guiding project setup.
+- Committing a plaintext `.env` accidentally after setup or decryption.
+- Sending plaintext `.env` files through chat or email.
+- Including explicitly excluded multiline assignments in a shared bundle.
+- Leaving secret files readable by other local users.
+- Partial outputs when a write, encryption, or decryption operation fails.
+- Repository-controlled file symlinks redirecting sensitive reads or writes.
+- Stale generated profiles hiding newly detected setup requirements.
 
-## Non-Goals
-
-EnvHelper cannot prevent every possible secret exposure.
-
-- It cannot stop a trusted teammate from copying a key after decrypting it.
-- It cannot protect keys from malware on a user's machine.
-- It cannot protect an API key that is already leaked to git history or public logs.
-- It is not a hosted vault, secrets manager, or access-control system.
-- It is not a replacement for rotating compromised provider keys.
-
-## Trust Boundaries
+## Trust boundaries
 
 ```txt
-User machine
-  reads/pastes secrets
-  writes .env
-  encrypts/decrypts .env.team.enc
+Local setup
+  scans non-secret project sources
+  accepts masked secret input
+  optionally validates directly with a selected provider
+  writes .env locally
 
-Git/chat/cloud storage
-  may carry .env.team.enc ciphertext
-  must never carry plaintext .env
+Sender
+  reads .env
+  reviews included key names
+  encrypts with age
 
-EnvHelper project
-  ships CLI code and non-secret provider metadata
-  does not receive user secrets
+Git, chat, or cloud storage
+  may carry only .env.team.enc ciphertext
+
+Recipient
+  stores a private age identity
+  decrypts to a local owner-only file where supported
 ```
 
-## Primary Risks
+EnvHelper trusts the local operating system, Node.js runtime, `age` executables on `PATH`, intended recipients, provider endpoints declared in the bundled directory, and the upstream tools used to install those components.
 
-### Compromised npm Package
+## Non-goals
 
-If the published EnvHelper package is compromised, malicious code could read local secrets. This is true for any CLI run on secrets. Prefer pinned versions and review changelogs for serious use.
+- Preventing an intended recipient from copying a secret after decryption.
+- Protecting a machine already controlled by malware or another process running as the same user.
+- Revoking old bundles without rotating the secrets they contain.
+- Detecting whether a key is personal, optional, or production-specific with certainty.
+- Proving that every environment reference in every programming language was discovered.
+- Acting as a hosted vault, repository leak scanner, access-control system, or provider key-rotation service.
 
-### Compromised Teammate Identity
+## Important limitations
 
-If a teammate's `age` private key is stolen, encrypted bundles for that recipient may be decrypted. Rotate upstream API keys and create a fresh encrypted bundle.
-
-### Old Encrypted Bundles in Git
-
-Git keeps old versions. Removing a recipient from the latest bundle does not erase older encrypted bundles from history. Rotate upstream API keys when removing a teammate from a sensitive project.
-
-### False Positives and Misses
-
-The scanner is a guardrail, not a proof. It can miss secrets and it can flag harmless strings. Treat `envhelper doctor` as a safety check, not a complete audit.
+Automatic setup classification and sharing exclusions are heuristics. Review the selected setup profile and the key-name sharing preview. `--whole-env` deliberately includes comments and unsupported content omitted by filtered mode.

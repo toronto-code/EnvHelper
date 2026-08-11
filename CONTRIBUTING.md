@@ -1,26 +1,23 @@
 # Contributing
 
-EnvHelper is intentionally small: local setup, provider links, encrypted `.env` sharing, and repo hygiene checks.
+EnvHelper is intentionally limited to two workflows: local environment setup and encrypted environment sharing.
 
-## Provider Links
+Before changing secret-handling behavior, read `SECURITY.md` and `THREAT_MODEL.md`.
 
-Provider entries live in `providers/providers.json`.
+## Requirements
 
-Rules:
+- Do not add a backend, telemetry, secret logging, leak scanner, or custom cryptography.
+- Treat repository files as untrusted and reject symbolic links for sensitive reads and writes.
+- Write secret files atomically with mode `0600`.
+- Never print environment values in status, previews, errors, or tests.
+- Keep `.envhelper.json` user-owned; do not generate or overwrite setup requirements.
+- Add regression tests for every security-sensitive bug.
 
-- Use official docs or official dashboard URLs only.
-- Add a `sourceUrl` for every provider.
-- Prefer documentation pages when dashboard routes are account-specific.
-- Do not map generic names like `DATABASE_URL` to one provider.
-- Mark client-safe values explicitly in `envSafety`.
-- Add notes for values that are commonly confused, such as publishable keys versus secret keys.
+## Provider guidance
 
-Run:
+Provider entries live in `providers/providers.json`. Use official documentation or dashboard URLs, scope HTTP validators to exact environment variables, and run:
 
 ```bash
 npm run providers:audit
+npm test
 ```
-
-## Security
-
-Do not add a hosted backend, telemetry, crash-report uploads, or custom cryptography. See `SECURITY.md` and `THREAT_MODEL.md` before changing secret-handling behavior.

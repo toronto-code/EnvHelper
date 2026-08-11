@@ -8,26 +8,6 @@ export async function loadProviders() {
   return JSON.parse(raw).providers;
 }
 
-export function providerTable(providers) {
-  return providers.map((provider) => ({
-    id: provider.id,
-    name: provider.name,
-    env: provider.env || [],
-    keyUrl: provider.keyUrl,
-    docsUrl: provider.docsUrl,
-    sourceUrl: provider.sourceUrl
-  }));
-}
-
-export function providerByQuery(query, providers) {
-  const normalized = query.toLowerCase();
-  return providers.find((provider) =>
-    provider.id.toLowerCase() === normalized ||
-    provider.name.toLowerCase() === normalized ||
-    (provider.aliases || []).some((alias) => alias.toLowerCase() === normalized)
-  ) || null;
-}
-
 export function providerForEnvVar(name, providers, packageNames = []) {
   const upper = name.toUpperCase();
   const exact = providers.find((provider) => (provider.env || []).includes(upper));

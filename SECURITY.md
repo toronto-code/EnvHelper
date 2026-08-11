@@ -1,51 +1,43 @@
 # Security Policy
 
-EnvHelper is designed around absence: there is no hosted backend that can receive, store, proxy, log, or transmit user secrets.
+EnvHelper handles setup and encrypted sharing locally. There is no backend that can receive, store, proxy, or log user secrets.
 
 ## Rules
 
-- No hosted backend by default.
-- No telemetry containing secret values.
-- No crash reports containing process environments.
-- No website where users paste API keys.
-- No API proxy where requests pass through EnvHelper.
-- No custom cryptography.
-- Secret values are redacted in terminal output.
-- Encryption and decryption happen locally.
-- Provider validation sends secrets only to the provider the user selected and only after explicit consent.
+- No hosted backend, accounts, telemetry, or crash-report uploads.
+- No website or EnvHelper API receives secret values.
+- No custom cryptography; sharing delegates to the official `age` CLI.
+- Secret prompts are masked and values are never printed in status or previews.
+- Provider validation is opt-in and sends a value only to that provider's documented endpoint.
+- Private identities, `.env`, and decrypted output use mode `0600` where the OS supports POSIX permissions.
+- Sensitive files are read only when they are regular files, not symbolic links.
+- Sensitive output is written to a temporary file and atomically renamed into place.
+- Filtered sharing contains only parsed environment assignments; comments and unsupported syntax are omitted.
 
-## Encryption
+## Local identity
 
-Team sharing uses `age`, a small file encryption tool built around modern primitives. EnvHelper shells out to the official `age` CLI with arguments, not through a shell string.
-
-Each teammate has a local identity file:
+Each recipient has an age identity at:
 
 ```txt
 ~/.envhelper/identity.txt
 ```
 
-EnvHelper creates this file with owner-only permissions where the OS supports it.
+EnvHelper creates the directory with mode `0700` and the identity with mode `0600`. The public `age1...` code is safe to share; the identity file is not.
 
-## Committing Encrypted Bundles
+## Encrypted bundles in Git
 
-Committing `.env.team.enc` can be reasonable because it is encrypted ciphertext. It still has a rotation tradeoff:
+Committing `.env.team.enc` may be acceptable, but removing a recipient from the newest bundle does not remove their access to older bundles in Git history.
 
-> If a teammate's private key is compromised later, old committed encrypted bundles that include that teammate may become readable.
+When an identity is compromised or access must be revoked:
 
-If this happens, rotate the upstream API keys and re-run:
+1. Rotate the upstream API keys and passwords.
+2. Remove the recipient from the invite set.
+3. Run `envhelper rekey` for future bundles.
 
-```bash
-envhelper share
-```
+## Trusted local tools
 
-`envhelper rekey` re-encrypts the current local `.env` to a fresh recipient set. It does not rewrite git history or rotate upstream provider keys for you.
+EnvHelper trusts the local Node.js runtime and executes `age` and `age-keygen` from `PATH`. Install them from a trusted source. Avoid running EnvHelper with a project-controlled `node_modules/.bin` ahead of the intended system `age` installation.
 
-## Supply Chain Note
+## Reporting a vulnerability
 
-For a tool that handles secrets, repeatedly running an unpinned `npx envhelper` has supply-chain risk. Prefer a pinned version once EnvHelper is published:
-
-```bash
-npm install -g envhelper@0.1.0
-```
-
-For team projects, document the expected EnvHelper version in your repo.
+Never include real secrets, private identities, or decrypted `.env` content in a report. Use fake values in a minimal reproduction.

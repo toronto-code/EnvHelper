@@ -31,6 +31,9 @@ for (const provider of directory.providers || []) {
   requireString(provider.name, `${label}.name`);
   requireString(provider.sourceUrl, `${label}.sourceUrl`);
   requireString(provider.sourceKind, `${label}.sourceKind`);
+  if (provider.sourceKind && provider.sourceKind !== "official-docs") {
+    errors.push(`${label}.sourceKind must be official-docs`);
+  }
 
   if (ids.has(provider.id)) errors.push(`duplicate provider id: ${provider.id}`);
   ids.add(provider.id);
@@ -65,6 +68,9 @@ for (const provider of directory.providers || []) {
   for (const env of Object.keys(provider.envSafety || {})) {
     if (!(provider.env || []).includes(env)) {
       errors.push(`${label}.envSafety.${env} is not listed in ${label}.env`);
+    }
+    if (typeof provider.envSafety[env].clientSafe !== "boolean") {
+      errors.push(`${label}.envSafety.${env}.clientSafe must be a boolean`);
     }
   }
 
@@ -116,5 +122,11 @@ function validateValidation(validation, field, provider) {
   }
   if (validation.type === "format" && !validation.pattern) {
     errors.push(`${field}.pattern is required for format validation`);
+  } else if (validation.type === "format") {
+    try {
+      new RegExp(validation.pattern);
+    } catch (error) {
+      errors.push(`${field}.pattern is invalid: ${error.message}`);
+    }
   }
 }

@@ -68,7 +68,7 @@ async function validateHttp(secretValue, validation, timeoutMs) {
     return { ok: false, message: `Provider returned HTTP ${response.status}.` };
   } catch (error) {
     if (error.name === "AbortError") return { ok: null, message: "Validation timed out." };
-    return { ok: null, message: `Validation failed: ${error.message}` };
+    return { ok: null, message: "Validation failed before the provider returned a response." };
   } finally {
     clearTimeout(timeout);
   }

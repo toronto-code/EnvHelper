@@ -1,7 +1,7 @@
 {
   "name": "envhelper",
-  "version": "0.1.0",
-  "description": "Local-first .env setup, audit, and sharing for solo builders and small teams.",
+  "version": "0.2.0",
+  "description": "Local-first .env setup and encrypted sharing for small teams.",
   "type": "module",
   "bin": {
     "envhelper": "./src/cli.js"
@@ -16,9 +16,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "start": "node ./src/cli.js start",
-    "doctor": "node ./src/cli.js doctor",
-    "providers": "node ./src/cli.js providers",
+    "setup": "node ./src/cli.js setup",
+    "share": "node ./src/cli.js share",
     "providers:audit": "node ./scripts/audit-providers.js",
     "check": "npm test",
     "test": "node --test && node ./scripts/audit-providers.js"
@@ -27,8 +26,8 @@
     "env",
     "dotenv",
     "api-keys",
+    "setup",
     "secrets",
-    "hackathon",
     "cli",
     "age-encryption"
   ],

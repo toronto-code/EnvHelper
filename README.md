@@ -1,71 +1,23 @@
 # EnvHelper
 
-Stop sending `.env` files in chat.
+Set up a project's `.env`, then share it without putting plaintext secrets in chat.
 
-EnvHelper is a local-first CLI for setting up, checking, and sharing project environment variables. It helps solo developers and small teams figure out which values a repo needs, where to get provider keys, what can be skipped, and how to share `.env` without plaintext copy-paste.
+EnvHelper has two jobs:
 
-No accounts. No hosted vault. No EnvHelper server. No plaintext secret sharing.
+1. **Setup:** detect environment variables, explain where values come from, and save them locally.
+2. **Sharing:** encrypt selected `.env` assignments for teammates with [`age`](https://age-encryption.org/).
 
-## Why
-
-Most project setup docs eventually become:
-
-```txt
-cp .env.example .env
-go get an OpenAI key
-go get a Supabase key
-ask someone for the Slack token
-do not commit anything
-good luck
-```
-
-EnvHelper turns that into a guided local flow:
-
-```bash
-envhelper start
-```
-
-```txt
-Setup profiles:
-
-1. Local demo
-   Required values only. Best for getting the app running locally.
-   0 missing, 8 set
-2. Real AI mode
-   Required values plus AI provider keys such as OpenAI or Anthropic.
-   0 missing, 10 set
-3. Integrations mode
-   Required values plus GitHub, Jira, Slack, and similar integration keys.
-   2 missing, 11 set
-
-Choose setup profile [1]:
-```
-
-Then EnvHelper shows one focused action screen:
-
-```txt
-EnvHelper setup
-
-Profile: Integrations mode
-
-! GitHub: 1/2 set
-  ! GITHUB_WEBHOOK_SECRET
-! Slack: 2/3 set
-  ! SLACK_SIGNING_SECRET
-✓ Supabase: 6/6 set
-
-What do you want to do?
-1. Fill missing values
-2. Show key links
-3. Share current .env
-4. Save decisions to .envhelper.lock
-5. Pick a different profile
-6. Exit
-```
+There is no EnvHelper account, hosted vault, telemetry service, or backend that receives your secrets.
 
 ## Install
 
-From this repo:
+Install `age` for sharing:
+
+```bash
+brew install age
+```
+
+Then install EnvHelper from this repository:
 
 ```bash
 git clone https://github.com/toronto-code/EnvHelper.git
@@ -73,198 +25,133 @@ cd EnvHelper
 npm link
 ```
 
-Then run EnvHelper inside any project:
+## Set up a project
+
+Run this inside the project that needs environment variables:
 
 ```bash
-envhelper start
+envhelper setup
 ```
 
-After the package is published to npm:
-
-```bash
-npm install -g envhelper
-```
-
-Team sharing uses [`age`](https://age-encryption.org/):
-
-```bash
-brew install age
-```
-
-## Core Commands
-
-```bash
-envhelper start
-```
-
-Open the guided setup flow. EnvHelper scans `.env.example`, docs, code references, and local `.env` variable names. Secret values are never printed.
-
-Useful shortcuts:
-
-```bash
-envhelper start --profile local-demo
-envhelper start --profile real-ai
-envhelper start --profile integrations
-```
-
-```bash
-envhelper needs
-```
-
-Show what still needs action. Already-set values are hidden by default.
-
-```bash
-envhelper needs --show-set
-envhelper needs --optional
-envhelper needs --all
-envhelper needs --verbose
-```
-
-```bash
-envhelper doctor
-```
-
-Check `.env` hygiene, `.gitignore`, likely leaked secret values, team bundle presence, and real frontend runtime exposure.
-
-Doctor is intentionally conservative. It does not treat `.env.example`, docs, or UI copy that merely mentions `OPENAI_API_KEY` as proof of a leak. It only flags frontend exposure when a secret env var is referenced in frontend runtime code.
-
-Example:
+EnvHelper reads `.env.example`, optional hand-authored `.envhelper.json` requirements, package metadata, and common environment-variable references in source files. It groups credentials into distinct setup profiles and hides values already present in `.env`.
 
 ```txt
-✓ .env is ignored
-✓ .env.example exists
-✓ .env exists locally
-✓ .env has all likely setup values (90 optional/default/config value(s) not set)
-✓ No team bundle found; sharing is optional
-✓ Detected 103 env var(s)
+EnvHelper Setup
+
+Choose what you are setting up:
+
+1. Local demo
+   Required credentials only. 2 missing, 3 ready.
+2. Real AI
+   Required credentials plus detected AI provider keys. 3 missing, 3 ready.
 ```
+
+Useful setup modes:
 
 ```bash
-envhelper share
+envhelper setup --profile local-demo
+envhelper setup --profile real-ai
+envhelper setup --profile integrations
+envhelper setup --optional
+envhelper setup --all
+envhelper setup --dry-run
 ```
 
-Open the sharing wizard:
+`--dry-run` shows the selected scope and provider links without changing files. `--validate` opts into direct provider validation where a validator exists; secrets go directly from your machine to that provider, never to EnvHelper.
 
-```txt
-EnvHelper Share
+Setup writes `.env` atomically with owner-only permissions where the OS supports them, updates `.env.example` with variable names only, and ensures standard `.env` ignore rules are present. Existing comments and assignments are preserved when values are updated.
 
-What are you doing?
+For requirements that cannot be discovered from source, create `.envhelper.json` manually:
 
-1. I want to receive a shared .env
-2. I want to share my .env with teammates
-3. I received .env.team.enc and want to decrypt it
+```json
+{
+  "required": ["ACME_API_KEY"]
+}
 ```
 
-When sharing, EnvHelper asks what to include:
+EnvHelper never rewrites this user-owned configuration file and does not use a generated lock file, so newly detected requirements cannot be hidden by stale setup decisions.
 
-```txt
-1. Share .env excluding likely personal keys
-2. Share whole .env
-3. Choose keys to exclude
-```
+## Share a `.env`
 
-More explicit sharing commands:
+Each recipient creates an identity once:
 
 ```bash
-envhelper invite
+envhelper invite --out alice.pub
+```
+
+The command prints an `age1...` public invite code. The private identity stays at `~/.envhelper/identity.txt` with owner-only permissions where supported.
+
+The sender encrypts `.env` for one or more recipients:
+
+```bash
 envhelper share --recipient age1...
-envhelper share --recipient age1... --whole-env
-envhelper share --recipient age1... --exclude GITHUB_TOKEN,PROD_DATABASE_URL
+envhelper share --recipient age1... --recipient age1...
 envhelper share --recipients-dir invites
+```
+
+Filtered sharing is the default. It parses complete assignments, omits comments and unsupported content, and excludes keys that look personal or production-specific. It prints key names—but never values—for review before encryption.
+
+```txt
+Share preview
+
+Recipients: 2
+Output: .env.team.enc
+Mode: automatic personal-key exclusions
+Included (3): OPENAI_API_KEY, SUPABASE_URL, TEAM_SETTING
+Excluded (2): GITHUB_TOKEN, PROD_DATABASE_URL
+```
+
+Choose exclusions or preview explicitly:
+
+```bash
+envhelper share --recipient age1... --exclude GITHUB_TOKEN,PROD_DATABASE_URL
+envhelper share --recipient age1... --dry-run
+```
+
+Share the raw file only when you intend to include everything, including comments and nonstandard syntax:
+
+```bash
+envhelper share --recipient age1... --whole-env
+```
+
+## Receive a bundle
+
+Place `.env.team.enc` in the project and run:
+
+```bash
 envhelper join
 ```
 
-```bash
-envhelper link stripe
-envhelper link ACME_API_KEY --copy
-envhelper link ACME_API_KEY --open
-```
+EnvHelper decrypts locally and writes `.env` atomically with owner-only permissions where supported. Existing output requires confirmation; non-interactive use must pass `--yes` to replace it.
 
-Find a provider key page. Known providers use curated official links. Unknown names get a Google search URL.
-
-## Smarter Setup Guidance
-
-EnvHelper gives less advice rather than wrong advice.
-
-It uses variable names to choose conservative instructions:
-
-- `*_WEBHOOK_SECRET`: generate a long random shared secret; do not use an access token.
-- `*_SIGNING_SECRET`: copy the provider signing secret; do not use a bot/API token.
-- `*_TOKEN`: token-specific guidance only.
-- `*_URL`: copy the URL value only.
-- `*_PUBLISHABLE_*` / `NEXT_PUBLIC_*`: warns to confirm the value is intended to be public.
-- unknown names: links to search/docs and avoids guessing.
-
-Example:
-
-```txt
-GitHub setup
-
-Value: GITHUB_WEBHOOK_SECRET
-Where: https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries
-Steps:
-  1. Generate a long random string, for example with a password manager or `openssl rand -hex 32`.
-  2. Paste that same string into the provider's webhook Secret field.
-  3. Paste the same string here as GITHUB_WEBHOOK_SECRET.
-  4. Do not use an access token for this value.
-Note: This is not a GitHub access token. It is used only to verify webhook signatures.
-```
-
-## Setup Profiles
-
-EnvHelper builds profiles from detected variables:
-
-- `local-demo`: required values only
-- `real-ai`: required values plus AI provider keys
-- `integrations`: required values plus GitHub/Jira/Slack-style integrations
-- `known-optional`: required values plus known optional provider keys referenced by the repo
-
-You can save decisions:
-
-```txt
-Save these setup decisions to .envhelper.lock? [Y/n]
-```
-
-`.envhelper.lock` contains env var names and profile choices only. It never contains secret values.
-
-## Provider Directory
-
-EnvHelper ships with curated provider metadata for 52 common services, including Stripe, Supabase, Anthropic, OpenAI, Clerk, Resend, Twilio, Firebase, GitHub, Jira, Google Maps, AWS, Cloudflare, Vercel, Neon, Pinecone, MongoDB Atlas, Groq, Replicate, Deepgram, Slack, Discord, Plaid, Square, PayPal, and Airtable.
-
-Provider entries must use official docs or official dashboards as sources. The provider audit rejects duplicate env vars, generic mappings like `DATABASE_URL`, invalid URLs, and guessed search-result sources.
-
-When EnvHelper does not know a provider, it falls back to a Google search URL instead of hallucinating a key page.
-
-## Security Model
-
-EnvHelper does not run a backend and does not receive your secrets.
-
-Secrets are:
-
-- entered locally
-- written locally to `.env`
-- validated only after explicit consent
-- encrypted locally with `age`
-- decrypted locally by the recipient
-
-EnvHelper never asks you to paste secrets into a website.
-
-Honest limitation:
-
-> Once a teammate decrypts the bundle, they have the real API key. EnvHelper prevents accidental leaking during setup and sharing; it cannot stop a trusted teammate from intentionally copying the key.
-
-Read [SECURITY.md](./SECURITY.md) and [THREAT_MODEL.md](./THREAT_MODEL.md) for the design rules.
-
-## Other Commands
+Custom paths are supported:
 
 ```bash
-envhelper add stripe
-envhelper add ACME_API_KEY
-envhelper providers
-envhelper providers --json
-envhelper validate
-envhelper doctor --fix
-envhelper commands
+envhelper join --input secrets/team.enc --output .env.local
 ```
 
-`envhelper validate` only sends a value directly from your machine to that provider after asking for confirmation. Values are never sent to EnvHelper.
+## Change recipients
+
+Re-encrypt the current `.env` for a new recipient set:
+
+```bash
+envhelper rekey --recipients-dir invites
+```
+
+This changes access to new bundles only. Rotate upstream keys when a recipient must lose access to old bundles.
+
+## Command surface
+
+```txt
+envhelper setup
+envhelper share
+envhelper invite
+envhelper rekey
+envhelper join
+envhelper help
+envhelper version
+```
+
+`envhelper start` remains as an alias for `setup`. Leak scanning and repository-audit commands are intentionally outside this focused product.
+
+Read [SECURITY.md](./SECURITY.md) and [THREAT_MODEL.md](./THREAT_MODEL.md) before committing encrypted bundles containing sensitive production credentials.
