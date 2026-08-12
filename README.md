@@ -18,10 +18,19 @@ EnvHelper is a local command-line tool. It has no accounts, hosted vault, teleme
 
 ## Quick start
 
-Requires Node.js 18 or newer.
+Requires Node.js 18 or newer. Until the first npm release, install EnvHelper directly from GitHub:
 
 ```bash
-npm install -g envhelper
+npm install -g github:toronto-code/EnvHelper
+```
+
+After EnvHelper is published to npm, the install command will be `npm install -g envhelper`.
+
+Confirm the installation:
+
+```bash
+envhelper --version
+envhelper --help
 ```
 
 Run setup inside a project:
