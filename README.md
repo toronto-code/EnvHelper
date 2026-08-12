@@ -17,7 +17,13 @@ Install `age` for sharing:
 brew install age
 ```
 
-Then install EnvHelper from this repository:
+Install EnvHelper globally from npm:
+
+```bash
+npm install -g envhelper
+```
+
+For local development, install it from this repository:
 
 ```bash
 git clone https://github.com/toronto-code/EnvHelper.git

@@ -4,7 +4,7 @@
   "description": "Local-first .env setup and encrypted sharing for small teams.",
   "type": "module",
   "bin": {
-    "envhelper": "./src/cli.js"
+    "envhelper": "src/cli.js"
   },
   "files": [
     "src",
