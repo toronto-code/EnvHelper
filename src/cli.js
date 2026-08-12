@@ -99,21 +99,33 @@ async function setup(argv = []) {
   const profile = await chooseSetupProfile(allProfiles, options);
   const selectedRows = profile.items;
   const missing = selectedRows.filter((row) => row.status === "missing");
+  const defaults = selectedRows.filter((row) => row.status === "default");
 
   printSetupStatus(profile, selectedRows);
-  if (!missing.length) {
-    console.log("\nEverything in this setup scope is ready (set locally or supplied by a template default).");
+  if (!missing.length && !defaults.length) {
+    console.log("\nEverything in this setup scope is ready in .env.");
     return;
   }
 
-  console.log("\nMissing values:");
-  for (const row of missing) {
-    console.log(`- ${row.name} (${providerLabel(row)})`);
-    if (row.url) console.log(`  ${formatLink(row.provider ? "open key page" : "search provider docs", row.url)}`);
+  if (defaults.length) {
+    console.log("\nTemplate defaults to apply:");
+    for (const row of defaults) console.log(`- ${row.name}`);
+    console.log("These non-secret defaults will be copied into .env.");
+  }
+
+  if (missing.length) {
+    console.log("\nMissing values:");
+    for (const row of missing) {
+      console.log(`- ${row.name} (${providerLabel(row)})`);
+      if (row.url) console.log(`  ${formatLink(row.provider ? "open key page" : "search provider docs", row.url)}`);
+    }
   }
 
   if (options.dryRun) {
-    console.log("\nDry run only; no files were changed.");
+    const actions = [];
+    if (defaults.length) actions.push(`${defaults.length} template default(s) would be copied`);
+    if (missing.length) actions.push(`${missing.length} value(s) would be requested`);
+    console.log(`\nDry run only; ${actions.join(" and ")}. No files were changed.`);
     return;
   }
 
@@ -121,7 +133,7 @@ async function setup(argv = []) {
   const exampleChanged = await writeEnvExample(path.join(cwd, ".env.example"), rows.map((row) => row.name));
   if (exampleChanged) console.log("\nUpdated .env.example with detected variable names.");
 
-  const updates = {};
+  const updates = Object.fromEntries(defaults.map((row) => [row.name, row.defaultValue]));
   for (const row of missing) {
     printProviderCard(row);
     const value = await promptSecret(`Paste ${row.name}, or press Enter to skip: `);
@@ -145,12 +157,15 @@ function enrichSetupRows(scan, providers, existing) {
     const provider = providerForEnvVar(item.name, providers, scan.packageNames);
     const template = summarizeTemplates(item.templates || []);
     const kind = classifyEnvVar(item.name, provider, template);
+    const defaultValue = safeTemplateDefault(item.name, provider, kind, template);
+    const locallySet = Object.hasOwn(existing, item.name) && existing[item.name] !== "";
     return {
       ...item,
       provider,
       template,
       kind,
-      status: existing[item.name] ? "set" : template.allHaveDefaults ? "default" : "missing",
+      defaultValue,
+      status: locallySet ? "set" : defaultValue !== null ? "default" : "missing",
       url: provider ? bestEnvUrl(provider, item.name) : kind.includes("credential") ? googleSearchUrl(item.name) : null
     };
   });
@@ -209,8 +224,10 @@ async function chooseSetupProfile(profiles, options) {
   console.log("Choose what you are setting up:\n");
   useful.forEach((profile, index) => {
     const missing = profile.items.filter((item) => item.status === "missing").length;
+    const defaults = profile.items.filter((item) => item.status === "default").length;
+    const ready = profile.items.length - missing - defaults;
     console.log(`${index + 1}. ${profile.name}`);
-    console.log(`   ${profile.description} ${missing} missing, ${profile.items.length - missing} ready.`);
+    console.log(`   ${profile.description} ${missing} missing, ${defaults} defaults available, ${ready} ready.`);
   });
   const choices = useful.map((_, index) => String(index + 1));
   const choice = await promptChoice("\nChoose [1]: ", choices, "1");
@@ -237,8 +254,12 @@ function printSetupStatus(profile, rows) {
     groups.get(label).push(row);
   }
   for (const [label, items] of [...groups.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-    const ready = items.filter((item) => item.status !== "missing").length;
-    console.log(`${ready === items.length ? "✓" : "!"} ${label}: ${ready}/${items.length} ready`);
+    const ready = items.filter((item) => item.status === "set").length;
+    const defaults = items.filter((item) => item.status === "default").length;
+    console.log(`${ready === items.length ? "✓" : defaults ? "~" : "!"} ${label}: ${ready}/${items.length} ready${defaults ? `, ${defaults} default(s) available` : ""}`);
+    for (const item of items.filter((entry) => entry.status === "default")) {
+      console.log(`  ~ ${item.name} (template default will be copied)`);
+    }
     for (const item of items.filter((entry) => entry.status === "missing")) console.log(`  ! ${item.name}`);
   }
 }
@@ -323,13 +344,59 @@ function classifyEnvVar(name, provider, template) {
 function summarizeTemplates(templates) {
   const hasTemplate = templates.length > 0;
   const blank = templates.filter((template) => !template.hasDefault);
+  const defaults = templates.filter((template) => template.hasDefault).map((template) => normalizeTemplateValue(template.value));
+  const distinctDefaults = [...new Set(defaults)];
   const required = hasTemplate && blank.length > 0 && blank.every((template) => !template.optional);
   return {
     hasTemplate,
     required,
     blankOptional: hasTemplate && !required && blank.length > 0,
-    allHaveDefaults: hasTemplate && templates.every((template) => template.hasDefault)
+    defaultValue: hasTemplate && blank.length === 0 && distinctDefaults.length === 1 ? distinctDefaults[0] : null
   };
+}
+
+function safeTemplateDefault(name, provider, kind, template) {
+  const value = template.defaultValue;
+  if (value === null || looksLikePlaceholder(value)) return null;
+  const explicitlyClientSafe = provider && envVarClientSafe(name, provider) === true;
+  if (kind !== "config" && !explicitlyClientSafe) return null;
+  if (looksSecretBearingConfig(name, value)) return null;
+  return value;
+}
+
+function normalizeTemplateValue(value) {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('"')) {
+    if (!trimmed.endsWith('"')) return null;
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+  if (trimmed.startsWith("'")) {
+    return trimmed.endsWith("'") ? trimmed.slice(1, -1) : null;
+  }
+  return trimmed;
+}
+
+function looksLikePlaceholder(value) {
+  const normalized = value.trim().toLowerCase();
+  return /^(?:<[^>]+>|\{[^}]+\}|\$\{[^}]+\}|x{3,}|todo|tbd)$/.test(normalized) ||
+    /(?:^|[-_\s])(your|replace|change|insert)(?:[-_\s]|$)/.test(normalized) ||
+    /(?:placeholder|example\.com|example\.org|example\.net)/.test(normalized);
+}
+
+function looksSecretBearingConfig(name, value) {
+  const upper = name.toUpperCase();
+  if (/(?:DATABASE|DB|POSTGRES|MYSQL|MONGO|MONGODB|REDIS).*(?:URL|URI)$/.test(upper)) return true;
+  if (/(?:DSN|CONNECTION_STRING)$/.test(upper)) return true;
+  try {
+    const parsed = new URL(value);
+    return Boolean(parsed.username || parsed.password);
+  } catch {
+    return false;
+  }
 }
 
 function isAiCredential(row) {

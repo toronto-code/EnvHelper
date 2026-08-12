@@ -104,12 +104,39 @@ test("setup keeps optional credentials out of the default scope", async () => {
   assert.match(env, /OPENAI_API_KEY=fake-openai/);
 });
 
-test("template defaults are ready without being copied into .env", async () => {
-  const root = await tempDirectory("envhelper-defaults-");
-  await fs.writeFile(path.join(root, ".env.example"), "OPENAI_API_KEY=demo-placeholder\n", "utf8");
-  const result = runCli(["setup", "--dry-run"], { cwd: root });
+test("credential placeholders in templates remain missing", async () => {
+  const root = await tempDirectory("envhelper-placeholder-");
+  await fs.writeFile(path.join(root, ".env.example"), "OPENAI_API_KEY=your-key-here\n", "utf8");
+  const result = runCli(["setup", "--profile", "all", "--dry-run"], { cwd: root });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Everything in this setup scope is ready/);
+  assert.match(result.stdout, /Missing values:/);
+  assert.match(result.stdout, /OPENAI_API_KEY/);
+  assert.match(result.stdout, /1 value\(s\) would be requested/);
+  assert.doesNotMatch(result.stdout, /Everything in this setup scope is ready/);
+  await assert.rejects(fs.access(path.join(root, ".env")));
+});
+
+test("safe template defaults are copied into .env without prompting", async () => {
+  const root = await tempDirectory("envhelper-defaults-");
+  await fs.writeFile(path.join(root, ".env.example"), "PORT=3000\nFEATURE_FLAG=true\nAPP_LABEL=\"Demo # one\"\nSUPABASE_URL=https://demo.supabase.co\n", "utf8");
+  const result = runCli(["setup"], { cwd: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Template defaults to apply:/);
+  assert.match(result.stdout, /These non-secret defaults will be copied into \.env/);
+  assert.equal(await fs.readFile(path.join(root, ".env"), "utf8"), "APP_LABEL=\"Demo # one\"\nFEATURE_FLAG=true\nPORT=3000\nSUPABASE_URL=https://demo.supabase.co\n");
+  assert.equal((await fs.stat(path.join(root, ".env"))).mode & 0o077, 0);
+});
+
+test("secret-bearing and conflicting template defaults are not copied", async () => {
+  const root = await tempDirectory("envhelper-unsafe-defaults-");
+  await fs.writeFile(path.join(root, ".env.example"), "DATABASE_URL=postgres://user:password@localhost/app\nPORT=3000\n", "utf8");
+  await fs.writeFile(path.join(root, ".env.sample"), "PORT=4000\n", "utf8");
+  const result = runCli(["setup", "--profile", "all", "--dry-run"], { cwd: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /DATABASE_URL/);
+  assert.match(result.stdout, /PORT/);
+  assert.match(result.stdout, /2 value\(s\) would be requested/);
+  assert.doesNotMatch(result.stdout, /Template defaults to apply:/);
   await assert.rejects(fs.access(path.join(root, ".env")));
 });
 

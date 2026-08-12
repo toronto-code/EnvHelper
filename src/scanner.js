@@ -155,6 +155,20 @@ function parseEnvTemplate(content) {
 
 function stripInlineComment(value) {
   if (!value) return "";
+  const quote = value[0];
+  if (quote === '"' || quote === "'") {
+    let escaped = false;
+    for (let index = 1; index < value.length; index++) {
+      const char = value[index];
+      if (quote === '"' && char === "\\" && !escaped) {
+        escaped = true;
+        continue;
+      }
+      if (char === quote && !escaped) return value.slice(0, index + 1);
+      escaped = false;
+    }
+    return value;
+  }
   const hash = value.indexOf("#");
   return hash === -1 ? value : value.slice(0, hash).trim();
 }
